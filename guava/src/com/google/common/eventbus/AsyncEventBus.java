@@ -1,24 +1,9 @@
-/*
- * Copyright (C) 2007 The Guava Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License
- * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
- * or implied. See the License for the specific language governing permissions and limitations under
- * the License.
- */
-
 package com.google.common.eventbus;
 
 import java.util.concurrent.Executor;
 
 /**
- * An {@link EventBus} that takes the Executor of your choice and uses it to dispatch events,
- * allowing dispatch to occur asynchronously.
+ * 异步事件总线：与同步事件总线的区别是要求必须传入自定义的执行器，一般是自定义业务线程池
  *
  * @author Cliff Biffle
  * @since 10.0
@@ -26,38 +11,16 @@ import java.util.concurrent.Executor;
 @ElementTypesAreNonnullByDefault
 public class AsyncEventBus extends EventBus {
 
-  /**
-   * Creates a new AsyncEventBus that will use {@code executor} to dispatch events. Assigns {@code
-   * identifier} as the bus's name for logging purposes.
-   *
-   * @param identifier short name for the bus, for logging purposes.
-   * @param executor Executor to use to dispatch events. It is the caller's responsibility to shut
-   *     down the executor after the last event has been posted to this event bus.
-   */
+  /** 构造方法 */
   public AsyncEventBus(String identifier, Executor executor) {
+    // 要求必须传入自定义的执行器，默认使用全局队列事件分发器
     super(identifier, executor, Dispatcher.legacyAsync(), LoggingHandler.INSTANCE);
   }
-
-  /**
-   * Creates a new AsyncEventBus that will use {@code executor} to dispatch events.
-   *
-   * @param executor Executor to use to dispatch events. It is the caller's responsibility to shut
-   *     down the executor after the last event has been posted to this event bus.
-   * @param subscriberExceptionHandler Handler used to handle exceptions thrown from subscribers.
-   *     See {@link SubscriberExceptionHandler} for more information.
-   * @since 16.0
-   */
   public AsyncEventBus(Executor executor, SubscriberExceptionHandler subscriberExceptionHandler) {
     super("default", executor, Dispatcher.legacyAsync(), subscriberExceptionHandler);
   }
-
-  /**
-   * Creates a new AsyncEventBus that will use {@code executor} to dispatch events.
-   *
-   * @param executor Executor to use to dispatch events. It is the caller's responsibility to shut
-   *     down the executor after the last event has been posted to this event bus.
-   */
   public AsyncEventBus(Executor executor) {
     super("default", executor, Dispatcher.legacyAsync(), LoggingHandler.INSTANCE);
   }
+
 }
