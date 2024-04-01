@@ -1,17 +1,3 @@
-/*
- * Copyright (C) 2014 The Guava Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License
- * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
- * or implied. See the License for the specific language governing permissions and limitations under
- * the License.
- */
-
 package com.google.common.eventbus;
 
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -24,64 +10,57 @@ import java.util.concurrent.Executor;
 import javax.annotation.CheckForNull;
 
 /**
- * A subscriber method on a specific object, plus the executor that should be used for dispatching
- * events to it.
- *
- * <p>Two subscribers are equivalent when they refer to the same method on the same object (not
- * class). This property is used to ensure that no subscriber method is registered more than once.
+ * 事件订阅者
  *
  * @author Colin Decker
  */
 @ElementTypesAreNonnullByDefault
 class Subscriber {
 
-  /** Creates a {@code Subscriber} for {@code method} on {@code listener}. */
+  /** 归属的事件总线、归属的监听器对象、归属的订阅者方法、归属的事件执行器 */
+  @Weak private EventBus bus;
+  @VisibleForTesting final Object target;
+  private final Method method;
+  private final Executor executor;
+
+  /** 构造方法 */
   static Subscriber create(EventBus bus, Object listener, Method method) {
+    // 基于该方法是否为线程安全的，构造不同的订阅者
     return isDeclaredThreadSafe(method)
         ? new Subscriber(bus, listener, method)
         : new SynchronizedSubscriber(bus, listener, method);
   }
-
-  /** The event bus this subscriber belongs to. */
-  @Weak private EventBus bus;
-
-  /** The object with the subscriber method. */
-  @VisibleForTesting final Object target;
-
-  /** Subscriber method. */
-  private final Method method;
-
-  /** Executor to use for dispatching events to this subscriber. */
-  private final Executor executor;
-
+  /** 检查该方法是否声明了线程安全：若带有AllowConcurrentEvents注解，则为线程安全的*/
+  private static boolean isDeclaredThreadSafe(Method method) {
+    return method.getAnnotation(AllowConcurrentEvents.class) != null;
+  }
   private Subscriber(EventBus bus, Object target, Method method) {
     this.bus = bus;
     this.target = checkNotNull(target);
     this.method = method;
     method.setAccessible(true);
-
     this.executor = bus.executor();
   }
 
-  /** Dispatches {@code event} to this subscriber using the proper executor. */
+  /** 分发事件：可采用合适的任务执行器（默认当前线程同步执行，可自定义线程池异步执行） */
   final void dispatchEvent(Object event) {
     executor.execute(
         () -> {
           try {
+            // 调用事件订阅者方法消费执行事件
             invokeSubscriberMethod(event);
           } catch (InvocationTargetException e) {
+            // 处理订阅者执行事件时抛出的异常
             bus.handleSubscriberException(e.getCause(), context(event));
           }
         });
   }
 
-  /**
-   * Invokes the subscriber method. This method can be overridden to make the invocation
-   * synchronized.
-   */
+  /** 调用事件订阅者方法消费执行事件 */
   @VisibleForTesting
   void invokeSubscriberMethod(Object event) throws InvocationTargetException {
     try {
+      // 调用事件订阅者方法消费执行事件
       method.invoke(target, checkNotNull(event));
     } catch (IllegalArgumentException e) {
       throw new Error("Method rejected target/argument: " + event, e);
@@ -95,7 +74,7 @@ class Subscriber {
     }
   }
 
-  /** Gets the context for the given event. */
+  /** 获取订阅者消费执行事件抛出的异常上下文 */
   private SubscriberExceptionContext context(Object event) {
     return new SubscriberExceptionContext(bus, event, target, method);
   }
@@ -109,26 +88,12 @@ class Subscriber {
   public final boolean equals(@CheckForNull Object obj) {
     if (obj instanceof Subscriber) {
       Subscriber that = (Subscriber) obj;
-      // Use == so that different equal instances will still receive events.
-      // We only guard against the case that the same object is registered
-      // multiple times
       return target == that.target && method.equals(that.method);
     }
     return false;
   }
 
-  /**
-   * Checks whether {@code method} is thread-safe, as indicated by the presence of the {@link
-   * AllowConcurrentEvents} annotation.
-   */
-  private static boolean isDeclaredThreadSafe(Method method) {
-    return method.getAnnotation(AllowConcurrentEvents.class) != null;
-  }
-
-  /**
-   * Subscriber that synchronizes invocations of a method to ensure that only one thread may enter
-   * the method at a time.
-   */
+  /** 同步事件订阅者：本地锁保证订阅者方法串行执行 */
   @VisibleForTesting
   static final class SynchronizedSubscriber extends Subscriber {
 
@@ -138,9 +103,11 @@ class Subscriber {
 
     @Override
     void invokeSubscriberMethod(Object event) throws InvocationTargetException {
+      // 本地锁保证订阅者方法串行执行
       synchronized (this) {
         super.invokeSubscriberMethod(event);
       }
     }
   }
+
 }
