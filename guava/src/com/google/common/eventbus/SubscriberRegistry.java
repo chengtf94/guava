@@ -35,7 +35,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
 import javax.annotation.CheckForNull;
 
 /**
- * 订阅者注册中心
+ * 事件订阅者注册中心
  *
  * @author Colin Decker
  */
