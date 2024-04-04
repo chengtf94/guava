@@ -390,8 +390,7 @@ public final class Uninterruptibles {
     sleepUninterruptibly(toNanosSaturated(sleepFor), TimeUnit.NANOSECONDS);
   }
 
-  // TODO(user): Support Sleeper somehow (wrapper or interface method)?
-  /** Invokes {@code unit.}{@link TimeUnit#sleep(long) sleep(sleepFor)} uninterruptibly. */
+  /** 精确睡眠：期间不响应中断 */
   @J2ktIncompatible
   @GwtIncompatible // concurrency
   @SuppressWarnings("GoodTime") // should accept a java.time.Duration
