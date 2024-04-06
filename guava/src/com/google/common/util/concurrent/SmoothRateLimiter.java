@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit;
 @ElementTypesAreNonnullByDefault
 abstract class SmoothRateLimiter extends RateLimiter {
 
-  /** 令牌桶最大容量、令牌桶当前容量、稳定间隔微秒数（生成下一个令牌所需的微秒数）、下次无需等待即可获取到令牌的时间 */
+  /** 最大令牌数、当前令牌数、生成一个令牌所需的时间（1/QPS）、下一次请求可获取到令牌的时间（可服务的时间，在在此之前则睡眠到该时间点才能获得令牌） */
   double maxPermits;
   double storedPermits;
   double stableIntervalMicros;
@@ -41,24 +41,28 @@ abstract class SmoothRateLimiter extends RateLimiter {
   }
   abstract void doSetRate(double permitsPerSecond, double stableIntervalMicros);
 
-  /**  基于要获取的令牌数量、当前微秒数，计算这些令牌可使用的最早时间 */
+  /**  核心算法实现：基于要获取的令牌数量、当前时间，计算可得到这些令牌的最早时间 */
   @Override
   final long reserveEarliestAvailable(int requiredPermits, long nowMicros) {
+    // #1 根据当前时间和下一次请求可获取到令牌的时间判断有无新令牌产⽣，有则更新当前令牌数、下一次请求可获取到令牌的时间
     resync(nowMicros);
+    // #2 计算持可⽤的令牌数量、需要预⽀的令牌数量
     long returnValue = nextFreeTicketMicros;
     double storedPermitsToSpend = min(requiredPermits, this.storedPermits);
     double freshPermits = requiredPermits - storedPermitsToSpend;
+    // #3 计算下一次请求需要等待的时间：等待时间 = 桶内令牌发放时间（突发模式下为0） + 生成预支令牌所需时间
     long waitMicros = storedPermitsToWaitTime(this.storedPermits, storedPermitsToSpend)
             + (long) (freshPermits * stableIntervalMicros);
+    // #4 更新下一次请求可获取到令牌的时间、当前令牌数
     this.nextFreeTicketMicros = LongMath.saturatedAdd(nextFreeTicketMicros, waitMicros);
     this.storedPermits -= storedPermitsToSpend;
     return returnValue;
   }
 
-  /** 再同步：只有当nowMicros > nextFreeTicketMicros时才更新  */
+  /** 重新同步：只有当nowMicros > nextFreeTicketMicros时才更新当前令牌数、下一次请求可获取到令牌的时间  */
   void resync(long nowMicros) {
     if (nowMicros > nextFreeTicketMicros) {
-      // 桶内令牌数 = min(桶容量， 剩余令牌数 + 空闲时间内生成的令牌数)
+      // 当前令牌数 = min(最大令牌数， 剩余令牌数 + 空闲时间内生成的令牌数)
       // nextFreeTicketMicros = now
       double newPermits = (nowMicros - nextFreeTicketMicros) / coolDownIntervalMicros();
       storedPermits = min(maxPermits, storedPermits + newPermits);
@@ -67,7 +71,6 @@ abstract class SmoothRateLimiter extends RateLimiter {
   }
   /** 获取冷却期等待新令牌的微秒数 */
   abstract double coolDownIntervalMicros();
-
 
   /** 获取速率 */
   @Override
@@ -98,8 +101,8 @@ abstract class SmoothRateLimiter extends RateLimiter {
 
     @Override
     void doSetRate(double permitsPerSecond, double stableIntervalMicros) {
-      // 令牌桶最大容量 = 最大突发持续时间 * 速率
-      // 令牌桶当前容量 = 0
+      // 设置令牌桶最大容量 = 最大突发持续时间 * 速率
+      // 设置令牌桶当前容量 = 0
       double oldMaxPermits = this.maxPermits;
       maxPermits = maxBurstSeconds * permitsPerSecond;
       if (oldMaxPermits == Double.POSITIVE_INFINITY) {

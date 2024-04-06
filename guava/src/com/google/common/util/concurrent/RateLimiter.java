@@ -80,7 +80,7 @@ public abstract class RateLimiter {
     }
   }
 
-  /** 创建限流器：默认是平滑限流器（突增模式），基于令牌桶算法，要求传入速率（即每秒发放的许可证/令牌数量） */
+  /** 创建限流器：默认是平滑限流器（突发模式），基于令牌桶算法，要求传入速率（即每秒发放的许可证/令牌数量） */
   public static RateLimiter create(double permitsPerSecond) {
     return create(permitsPerSecond, SleepingStopwatch.createFromSystemTimer());
   }
@@ -137,7 +137,7 @@ public abstract class RateLimiter {
   }
   @CanIgnoreReturnValue
   public double acquire(int permits) {
-    // 先计算当前线程要等待的微秒数，然后睡眠，最后返回等待的秒数
+    // 先计算当前请求线程要等待的微秒数（惰性计算），然后精确睡眠等待，最后返回等待的秒数
     long microsToWait = reserve(permits);
     stopwatch.sleepMicrosUninterruptibly(microsToWait);
     return 1.0 * microsToWait / SECONDS.toMicros(1L);
@@ -177,7 +177,7 @@ public abstract class RateLimiter {
     return true;
   }
 
-  /** 基于要获取的令牌数量，计算当前线程要等待的微秒数 */
+  /** 基于要获取的令牌数量，计算当前请求线程要等待的微秒数 */
   final long reserve(int permits) {
     checkPermits(permits);
     synchronized (mutex()) {
@@ -194,7 +194,7 @@ public abstract class RateLimiter {
     return max(momentAvailable - nowMicros, 0);
   }
 
-  /**  基于要获取的令牌数量、当前微秒数，计算这些令牌可使用的最早时间 */
+  /** 核心算法实现：基于要获取的令牌数量、当前时间，计算可得到这些令牌的最早时间 */
   abstract long reserveEarliestAvailable(int permits, long nowMicros);
 
   /** 检查是否可获取到令牌 */
