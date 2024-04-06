@@ -46,7 +46,7 @@ abstract class SmoothRateLimiter extends RateLimiter {
   final long reserveEarliestAvailable(int requiredPermits, long nowMicros) {
     // #1 根据当前时间和下一次请求可获取到令牌的时间判断有无新令牌产⽣，有则更新当前令牌数、下一次请求可获取到令牌的时间
     resync(nowMicros);
-    // #2 计算持可⽤的令牌数量、需要预⽀的令牌数量
+    // #2 计算可⽤的令牌数量、需要预⽀的令牌数量
     long returnValue = nextFreeTicketMicros;
     double storedPermitsToSpend = min(requiredPermits, this.storedPermits);
     double freshPermits = requiredPermits - storedPermitsToSpend;
@@ -109,8 +109,7 @@ abstract class SmoothRateLimiter extends RateLimiter {
         // if we don't special-case this, we would get storedPermits == NaN, below
         storedPermits = maxPermits;
       } else {
-        storedPermits =
-                (oldMaxPermits == 0.0)
+        storedPermits = (oldMaxPermits == 0.0)
                         ? 0.0 // initial state
                         : storedPermits * maxPermits / oldMaxPermits;
       }
@@ -149,7 +148,7 @@ abstract class SmoothRateLimiter extends RateLimiter {
    */
   static final class SmoothWarmingUp extends SmoothRateLimiter {
 
-    /** 预热周期微秒数、梯形斜边的斜率、门槛令牌数量（门槛是指？）、冷却因子 */
+    /** 预热时间、预热期梯形斜率、区分预热期和冷却期的令牌数阈值、冷却因子（默认为3） */
     private final long warmupPeriodMicros;
     private double slope;
     private double thresholdPermits;
@@ -164,16 +163,19 @@ abstract class SmoothRateLimiter extends RateLimiter {
 
     @Override
     void doSetRate(double permitsPerSecond, double stableIntervalMicros) {
+      // #1 设置冷却期的等待时间
       double oldMaxPermits = maxPermits;
       double coldIntervalMicros = stableIntervalMicros * coldFactor;
+      // #2 设置冷却期的令牌数阈值，等于预热期生成令牌数的1/2
       thresholdPermits = 0.5 * warmupPeriodMicros / stableIntervalMicros;
-      maxPermits =
-          thresholdPermits + 2.0 * warmupPeriodMicros / (stableIntervalMicros + coldIntervalMicros);
+      // #3 设置最大令牌数
+      maxPermits = thresholdPermits + 2.0 * warmupPeriodMicros / (stableIntervalMicros + coldIntervalMicros);
+      // #4 设置预热区的斜率：纵坐标之差／横坐标之差
       slope = (coldIntervalMicros - stableIntervalMicros) / (maxPermits - thresholdPermits);
       if (oldMaxPermits == Double.POSITIVE_INFINITY) {
-        // if we don't special-case this, we would get storedPermits == NaN, below
         storedPermits = 0.0;
       } else {
+        // #5 设置当前令牌数 = 最大令牌数
         storedPermits =
             (oldMaxPermits == 0.0)
                 ? maxPermits // initial state is cold
@@ -183,21 +185,20 @@ abstract class SmoothRateLimiter extends RateLimiter {
 
     @Override
     long storedPermitsToWaitTime(double storedPermits, double permitsToTake) {
+      // #1 获取当前令牌数、令牌数阈值的差值
       double availablePermitsAboveThreshold = storedPermits - thresholdPermits;
+      // #2 若差值 > 0，即当前令牌数 > 令牌数阈值，表示此时到达冷却区，需要计算等待时间（即梯形的面积）
       long micros = 0;
-      // measuring the integral on the right part of the function (the climbing line)
-      // 预热期发放令牌的时间，即梯形的面积
       if (availablePermitsAboveThreshold > 0.0) {
+        // #2.1 预热区获取令牌花费的时间，即梯形的面积：（上底 + 下底） * ⾼ / 2
         double permitsAboveThresholdToTake = min(availablePermitsAboveThreshold, permitsToTake);
-        // TODO(cpovirk): Figure out a good name for this variable.
-        double length =
-            permitsToTime(availablePermitsAboveThreshold)
+        double length = permitsToTime(availablePermitsAboveThreshold)
                 + permitsToTime(availablePermitsAboveThreshold - permitsAboveThresholdToTake);
         micros = (long) (permitsAboveThresholdToTake * length / 2.0);
+        // #2.2 剩余的令牌从 stable部分拿
         permitsToTake -= permitsAboveThresholdToTake;
       }
-      // measuring the integral on the left part of the function (the horizontal line)
-      // 预热期发放令牌的时间，即矩形的面积
+      // #3 稳定区获取令牌花费的时间，即矩形的面积
       micros += (long) (stableIntervalMicros * permitsToTake);
       return micros;
     }
