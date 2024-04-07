@@ -1,17 +1,3 @@
-/*
- * Copyright (C) 2009 The Guava Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License
- * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
- * or implied. See the License for the specific language governing permissions and limitations under
- * the License.
- */
-
 package com.google.common.cache;
 
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -91,157 +77,74 @@ import javax.annotation.CheckForNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
- * The concurrent hash map implementation built by {@link CacheBuilder}.
- *
- * <p>This implementation is heavily derived from revision 1.96 of <a
- * href="http://tinyurl.com/ConcurrentHashMap">ConcurrentHashMap.java</a>.
+ * KV本地缓存容器
  *
  * @author Charles Fry
  * @author Bob Lee ({@code com.google.common.collect.MapMaker})
  * @author Doug Lea ({@code ConcurrentHashMap})
  */
-@SuppressWarnings({
-  "GoodTime", // lots of violations (nanosecond math)
-  "nullness", // too much trouble for the payoff
-})
+@SuppressWarnings({"GoodTime", "nullness",})
 @GwtCompatible(emulated = true)
-// TODO(cpovirk): Annotate for nullness.
 class LocalCache<K, V> extends AbstractMap<K, V> implements ConcurrentMap<K, V> {
+  static final Logger logger = Logger.getLogger(LocalCache.class.getName());
 
-  /*
-   * The basic strategy is to subdivide the table among Segments, each of which itself is a
-   * concurrently readable hash table. The map supports non-blocking reads and concurrent writes
-   * across different segments.
-   *
-   * If a maximum size is specified, a best-effort bounding is performed per segment, using a
-   * page-replacement algorithm to determine which entries to evict when the capacity has been
-   * exceeded.
-   *
-   * The page replacement algorithm's data structures are kept casually consistent with the map. The
-   * ordering of writes to a segment is sequentially consistent. An update to the map and recording
-   * of reads may not be immediately reflected on the algorithm's data structures. These structures
-   * are guarded by a lock and operations are applied in batches to avoid lock contention. The
-   * penalty of applying the batches is spread across threads so that the amortized cost is slightly
-   * higher than performing just the operation without enforcing the capacity constraint.
-   *
-   * This implementation uses a per-segment queue to record a memento of the additions, removals,
-   * and accesses that were performed on the map. The queue is drained on writes and when it exceeds
-   * its capacity threshold.
-   *
-   * The Least Recently Used page replacement algorithm was chosen due to its simplicity, high hit
-   * rate, and ability to be implemented with O(1) time complexity. The initial LRU implementation
-   * operates per-segment rather than globally for increased implementation simplicity. We expect
-   * the cache hit rate to be similar to that of a global LRU algorithm.
-   */
-
-  // Constants
-
-  /**
-   * The maximum capacity, used if a higher value is implicitly specified by either of the
-   * constructors with arguments. MUST be a power of two {@code <= 1<<30} to ensure that entries are
-   * indexable using ints.
-   */
+  /** 最大容量、最大segments分段数量 */
   static final int MAXIMUM_CAPACITY = 1 << 30;
-
-  /** The maximum number of segments to allow; used to bound constructor arguments. */
   static final int MAX_SEGMENTS = 1 << 16; // slightly conservative
-
   /** Number of (unsynchronized) retries in the containsValue method. */
   static final int CONTAINS_VALUE_RETRIES = 3;
-
   /**
    * Number of cache access operations that can be buffered per segment before the cache's recency
    * ordering information is updated. This is used to avoid lock contention by recording a memento
    * of reads and delaying a lock acquisition until the threshold is crossed or a mutation occurs.
-   *
-   * <p>This must be a (2^n)-1 as it is used as a mask.
    */
   static final int DRAIN_THRESHOLD = 0x3F;
-
   /**
    * Maximum number of entries to be drained in a single cleanup run. This applies independently to
    * the cleanup queue and both reference queues.
    */
-  // TODO(fry): empirically optimize this
   static final int DRAIN_MAX = 16;
 
-  // Fields
-
-  static final Logger logger = Logger.getLogger(LocalCache.class.getName());
-
-  /**
-   * Mask value for indexing into segments. The upper bits of a key's hash code are used to choose
-   * the segment.
-   */
+  /** segments分段数组、索引移位、索引掩码 */
+  final Segment<K, V>[] segments;
+  final int segmentShift;
   final int segmentMask;
 
-  /**
-   * Shift value for indexing within segments. Helps prevent entries that end up in the same segment
-   * from also ending up in the same bucket.
-   */
-  final int segmentShift;
-
-  /** The segments, each of which is a specialized hash table. */
-  final Segment<K, V>[] segments;
-
-  /** The concurrency level. */
+  /** 并发级别（segments分段数量）、K-V等价器、K-V引用策略、最大权重、缓存项权重计算器 */
   final int concurrencyLevel;
-
-  /** Strategy for comparing keys. */
   final Equivalence<Object> keyEquivalence;
-
-  /** Strategy for comparing values. */
   final Equivalence<Object> valueEquivalence;
-
-  /** Strategy for referencing keys. */
   final Strength keyStrength;
-
-  /** Strategy for referencing values. */
   final Strength valueStrength;
-
-  /** The maximum weight of this map. UNSET_INT if there is no maximum. */
   final long maxWeight;
-
-  /** Weigher to weigh cache entries. */
   final Weigher<K, V> weigher;
 
-  /** How long after the last access to an entry the map will retain that entry. */
+  /** 过期策略：写后过期时间间隔、访问后后过期时间间隔 */
   final long expireAfterAccessNanos;
-
-  /** How long after the last write to an entry the map will retain that entry. */
   final long expireAfterWriteNanos;
 
-  /** How long after the last write an entry becomes a candidate for refresh. */
+  /** 刷新策略：刷新时间间隔 */
   final long refreshNanos;
 
-  /** Entries waiting to be consumed by the removal listener. */
-  // TODO(fry): define a new type which creates event objects and automates the clear logic
-  final Queue<RemovalNotification<K, V>> removalNotificationQueue;
-
-  /**
-   * A listener that is invoked when an entry is removed due to expiration or garbage collection of
-   * soft/weak entries.
-   */
-  final RemovalListener<K, V> removalListener;
-
-  /** Measures time in a testable way. */
+  /** 时间源 */
   final Ticker ticker;
 
-  /** Factory used to create new entries. */
+  /** 移除通知队列：待移除缓存项监听器消费 */
+  final Queue<RemovalNotification<K, V>> removalNotificationQueue;
+
+  /** 移除缓存项监听器 */
+  final RemovalListener<K, V> removalListener;
+
+  /** 缓存项工厂 */
   final EntryFactory entryFactory;
 
-  /**
-   * Accumulates global cache statistics. Note that there are also per-segments stats counters which
-   * must be aggregated to obtain a global stats view.
-   */
+  /** 全局统计计数器 */
   final StatsCounter globalStatsCounter;
 
-  /** The default cache loader to use on loading operations. */
+  /** 默认缓存加载器 */
   @CheckForNull final CacheLoader<? super K, V> defaultLoader;
 
-  /**
-   * Creates a new, empty map with the specified strategy, initial capacity and concurrency level.
-   */
+  /** 构造方法 */
   LocalCache(
       CacheBuilder<? super K, ? super V> builder, @CheckForNull CacheLoader<? super K, V> loader) {
     concurrencyLevel = Math.min(builder.getConcurrencyLevel(), MAX_SEGMENTS);
