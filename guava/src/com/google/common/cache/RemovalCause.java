@@ -1,26 +1,9 @@
-/*
- * Copyright (C) 2011 The Guava Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License
- * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
- * or implied. See the License for the specific language governing permissions and limitations under
- * the License.
- */
-
 package com.google.common.cache;
 
 import com.google.common.annotations.GwtCompatible;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.concurrent.ConcurrentMap;
 
 /**
- * The reason why a cached entry was removed.
+ * 缓存项移除原因
  *
  * @author Charles Fry
  * @since 10.0
@@ -28,11 +11,8 @@ import java.util.concurrent.ConcurrentMap;
 @GwtCompatible
 @ElementTypesAreNonnullByDefault
 public enum RemovalCause {
-  /**
-   * The entry was manually removed by the user. This can result from the user invoking {@link
-   * Cache#invalidate}, {@link Cache#invalidateAll(Iterable)}, {@link Cache#invalidateAll()}, {@link
-   * Map#remove}, {@link ConcurrentMap#remove}, or {@link Iterator#remove}.
-   */
+
+  /** 用户主动移除：例如invalidate等 */
   EXPLICIT {
     @Override
     boolean wasEvicted() {
@@ -40,12 +20,7 @@ public enum RemovalCause {
     }
   },
 
-  /**
-   * The entry itself was not actually removed, but its value was replaced by the user. This can
-   * result from the user invoking {@link Cache#put}, {@link LoadingCache#refresh}, {@link Map#put},
-   * {@link Map#putAll}, {@link ConcurrentMap#replace(Object, Object)}, or {@link
-   * ConcurrentMap#replace(Object, Object, Object)}.
-   */
+  /** 用户主动移除：例如refresh等 */
   REPLACED {
     @Override
     boolean wasEvicted() {
@@ -53,11 +28,7 @@ public enum RemovalCause {
     }
   },
 
-  /**
-   * The entry was removed automatically because its key or value was garbage-collected. This can
-   * occur when using {@link CacheBuilder#weakKeys}, {@link CacheBuilder#weakValues}, or {@link
-   * CacheBuilder#softValues}.
-   */
+  /** GC自动移除：例如弱引用、软引用等 */
   COLLECTED {
     @Override
     boolean wasEvicted() {
@@ -65,10 +36,7 @@ public enum RemovalCause {
     }
   },
 
-  /**
-   * The entry's expiration timestamp has passed. This can occur when using {@link
-   * CacheBuilder#expireAfterWrite} or {@link CacheBuilder#expireAfterAccess}.
-   */
+  /** 过期自动移除：例如expireAfterAccess、expireAfterWrite等 */
   EXPIRED {
     @Override
     boolean wasEvicted() {
@@ -76,10 +44,7 @@ public enum RemovalCause {
     }
   },
 
-  /**
-   * The entry was evicted due to size constraints. This can occur when using {@link
-   * CacheBuilder#maximumSize} or {@link CacheBuilder#maximumWeight}.
-   */
+  /** 容量自动移除：例如maximumSize、maximumWeight等 */
   SIZE {
     @Override
     boolean wasEvicted() {
@@ -87,9 +52,7 @@ public enum RemovalCause {
     }
   };
 
-  /**
-   * Returns {@code true} if there was an automatic removal due to eviction (the cause is neither
-   * {@link #EXPLICIT} nor {@link #REPLACED}).
-   */
+  /** 是否被自动移除 */
   abstract boolean wasEvicted();
+
 }
